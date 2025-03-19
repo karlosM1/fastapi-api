@@ -8,13 +8,10 @@ from datetime import datetime
 import xlwings as xw
 import logging
 
-# Suppress PaddleOCR debug logs
 logging.getLogger("ppocr").setLevel(logging.ERROR)
 
-# Initialize PaddleOCR
 ocr = PaddleOCR()
 
-# Function to perform OCR on an image array
 def perform_ocr(image_array):
     if image_array is None or image_array.size == 0:
         raise ValueError("Invalid image for OCR")
@@ -37,19 +34,15 @@ def RGB(event, x, y, flags, param):
 cv2.namedWindow('RGB')
 cv2.setMouseCallback('RGB', RGB)
 
-# Load YOLOv8 model
 model = YOLO("best.pt")
 names = model.names
 
-# Define polygon area
 area = [(1, 173), (62, 468), (608, 431), (364, 155)]
 
-# Create directory for current date
 current_date = datetime.now().strftime('%Y-%m-%d')
 if not os.path.exists(current_date):
     os.makedirs(current_date)
 
-# Initialize Excel file path in the current date folder
 excel_file_path = os.path.join(current_date, f"{current_date}.xlsx")
 
 # Open Excel file with xlwings (create if not exists)
