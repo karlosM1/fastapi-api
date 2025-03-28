@@ -1,12 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException
 import cv2
 import numpy as np
 from ultralytics import YOLO
 import cvzone
 from paddleocr import PaddleOCR
-from datetime import datetime
-import shutil
 import os
+from datetime import datetime
 
 app = FastAPI()
 
@@ -33,15 +32,12 @@ area = [(1, 173), (62, 468), (608, 431), (364, 155)]
 @app.post("/upload_video/")
 async def upload_video(file: UploadFile = File(...)):
     try:
-        # Save the uploaded file
-        video_path = f"temp_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
+        video_path = "final.mp4"  
         with open(video_path, "wb") as buffer:
             buffer.write(file.file.read())
 
-        # Process the video and get results
         violations = process_video(video_path)
 
-        # Clean up: remove video file after processing
         os.remove(video_path)
 
         return {"violations": violations}
@@ -50,22 +46,19 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 def perform_ocr(image_array):
-    """Extract text from an image using OCR."""
-    if image_array is None:
-        return None
-    
+    if image_array is None or image_array.size == 0:
+        raise ValueError("Invalid image for OCR")
+
+    # Convert image to grayscale (better for OCR)
+    image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
+
     results = ocr.ocr(image_array, rec=True)
-    detected_text = []
+    detected_text = [result[1][0] for result in results[0] if result[1]]
 
-    if results and results[0] is not None:
-        for result in results[0]:
-            text = result[1][0]
-            detected_text.append(text)
-
-    return "".join(detected_text)
+    return ''.join(detected_text)
 
 def process_video(video_path):
-    """Process video to detect helmet violations and number plates."""
+    processed_track_ids = set()
     cap = cv2.VideoCapture(video_path)
     violations = []
 
@@ -85,8 +78,9 @@ def process_video(video_path):
             boxes = results[0].boxes.xyxy.int().cpu().tolist()
             class_ids = results[0].boxes.cls.int().cpu().tolist()
             track_ids = results[0].boxes.id.int().cpu().tolist()
+            confidences = results[0].boxes.conf.cpu().tolist() 
 
-            for box, class_id, track_id in zip(boxes, class_ids, track_ids):
+            for box, class_id, track_id, conf in zip(boxes, class_ids, track_ids, confidences):
                 c = names[class_id]
                 x1, y1, x2, y2 = box
                 cx = (x1 + x2) // 2
@@ -100,17 +94,21 @@ def process_video(video_path):
                         numberplate_box = box
                         numberplate_track_id = track_id
 
-            if no_helmet_detected and numberplate_box:
+            if no_helmet_detected and numberplate_box is not None and numberplate_track_id not in processed_track_ids:
                 x1, y1, x2, y2 = numberplate_box
                 crop = frame[y1:y2, x1:x2]
                 crop = cv2.resize(crop, (120, 85))
+                cvzone.putTextRect(frame, f'{track_id}', (x1, y1), 1, 1)
                 text = perform_ocr(crop)
+                print(f"Detected Number Plate: {text}")
 
                 violations.append({
                     "number_plate": text,
                     "timestamp": datetime.now().isoformat(),
                     "isHelmet": "No Helmet"
                 })
+                processed_track_ids.add(numberplate_track_id)
+        cv2.polylines(frame, [np.array(area, np.int32)], True, (255, 0, 255), 2)
 
     cap.release()
     return violations
