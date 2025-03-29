@@ -6,6 +6,8 @@ import cvzone
 from paddleocr import PaddleOCR
 import os
 from datetime import datetime
+import base64
+from io import BytesIO
 
 app = FastAPI()
 
@@ -14,7 +16,7 @@ model = YOLO("best.pt")
 names = model.names
 
 area = [(1, 173), (62, 468), (608, 431), (364, 155)]
-
+current_date = datetime.now().strftime('%Y-%m-%d')
 
 
 # @app.get("/violation")
@@ -49,7 +51,7 @@ def perform_ocr(image_array):
     if image_array is None or image_array.size == 0:
         raise ValueError("Invalid image for OCR")
 
-    # Convert image to grayscale (better for OCR)
+    
     image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
 
     results = ocr.ocr(image_array, rec=True)
@@ -102,10 +104,18 @@ def process_video(video_path):
                 text = perform_ocr(crop)
                 print(f"Detected Number Plate: {text}")
 
+                _, buffer = cv2.imencode('.jpg', crop)
+                crop_base64 = base64.b64encode(buffer).decode('utf-8')
+
+                current_time = datetime.now().strftime('%H-%M-%S-%f')[:12]
+                crop_image_path = os.path.join(current_date, f"{text}_{current_time}.jpg")
+                cv2.imwrite(crop_image_path, crop)
+
                 violations.append({
                     "number_plate": text,
                     "timestamp": datetime.now().isoformat(),
-                    "isHelmet": "No Helmet"
+                    "isHelmet": "No Helmet",
+                    "cropped_image": crop_base64
                 })
                 processed_track_ids.add(numberplate_track_id)
         cv2.polylines(frame, [np.array(area, np.int32)], True, (255, 0, 255), 2)
@@ -113,10 +123,13 @@ def process_video(video_path):
     cap.release()
     return violations
 
-@app.get("/detection")
-async def get_violation():
-    sample_response = {
-        "plate": "1234ABC",
-        "isHelmet": "No"
-    }
-    return {"message": sample_response}
+# @app.get("/detection")
+# async def get_violation():
+#     sample_response = {
+#         "plate": "1234ABC",
+#         "isHelmet": "No"
+#     }
+#     return {"message": sample_response}
+
+
+
