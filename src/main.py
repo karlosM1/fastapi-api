@@ -1,3 +1,4 @@
+import traceback
 from fastapi import FastAPI, File, UploadFile, HTTPException
 import cv2
 import numpy as np
@@ -5,11 +6,24 @@ from ultralytics import YOLO
 import cvzone
 from paddleocr import PaddleOCR
 import os
+import json
 from datetime import datetime
 import base64
 from io import BytesIO
+from typing import List, Dict, Any, Optional
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 ocr = PaddleOCR()
 model = YOLO("best.pt")
@@ -18,18 +32,113 @@ names = model.names
 area = [(1, 173), (62, 468), (608, 431), (364, 155)]
 current_date = datetime.now().strftime('%Y-%m-%d')
 
+VIOLATIONS_DIR = "violations_data"
+VIOLATIONS_FILE = os.path.join(VIOLATIONS_DIR, "violations.json")
 
-# @app.get("/violation")
-# async def get_violation():
-#     try:
-#         response = requests.get(MODEL_API_URL)
-#         # load model data
-#         # load video
-#         #predict on video
-#         # return prediction response
-#     except requests.RequestException as e:
-#         raise HTTPException(status_code=500, detail=f"Error contacting model API: {str(e)}")
+if not os.path.exists(VIOLATIONS_DIR):
+    os.makedirs(VIOLATIONS_DIR)
+
+if not os.path.exists(VIOLATIONS_FILE):
+    with open(VIOLATIONS_FILE, "w") as f:
+        json.dump({"violations": []}, f)
+
+def initialize_violations_file():
     
+    try:
+        with open(VIOLATIONS_FILE, "w") as f:
+            json.dump({"violations": []}, f, indent=2)
+        print(f"Initialized violations file at {VIOLATIONS_FILE}")
+    except Exception as e:
+        print(f"Error initializing violations file: {str(e)}")
+        traceback.print_exc()
+
+if not os.path.exists(VIOLATIONS_FILE):
+    initialize_violations_file()
+
+def save_violations(violations_list: List[Dict[str, Any]]):
+    
+    if not violations_list:
+        print("No violations to save")
+        return
+    
+    try:
+        # Create a data structure if file doesn't exist or is empty
+        if not os.path.exists(VIOLATIONS_FILE) or os.path.getsize(VIOLATIONS_FILE) == 0:
+            data = {"violations": []}
+        else:
+            # Read existing violations
+            try:
+                with open(VIOLATIONS_FILE, "r") as f:
+                    data = json.load(f)
+                # Ensure the structure is correct
+                if "violations" not in data:
+                    data = {"violations": []}
+            except json.JSONDecodeError:
+                # If the file is corrupted, reset it
+                print("JSON file was corrupted, resetting it")
+                data = {"violations": []}
+        
+        # Append new violations
+        data["violations"].extend(violations_list)
+        
+        # Write back to file with pretty formatting
+        with open(VIOLATIONS_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+            
+        print(f"Successfully saved {len(violations_list)} violations. Total: {len(data['violations'])}")
+        
+    except Exception as e:
+        print(f"Error saving violations: {str(e)}")
+        traceback.print_exc()
+
+@app.get("/violations/")
+async def get_violations(limit: Optional[int] = None, offset: Optional[int] = 0):
+    """
+    Get all recorded violations with optional pagination
+    
+    - limit: Maximum number of violations to return
+    - offset: Number of violations to skip
+    """
+    try:
+        
+        if not os.path.exists(VIOLATIONS_FILE) or os.path.getsize(VIOLATIONS_FILE) == 0:
+            print("Violations file doesn't exist or is empty")
+            return {"violations": []}
+        
+        with open(VIOLATIONS_FILE, "r") as f:
+            content = f.read()
+            if not content.strip():
+                print("Violations file is empty")
+                return {"violations": []}
+            
+            
+            f.seek(0)
+            data = json.load(f)
+        
+        if "violations" not in data:
+            print("Violations key not found in JSON data")
+            return {"violations": []}
+            
+        violations = data["violations"]
+        print(f"Found {len(violations)} violations in file")
+        
+        
+        if limit is not None:
+            violations = violations[offset:offset + limit]
+        elif offset > 0:
+            violations = violations[offset:]
+            
+        return {"violations": violations}
+        
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error: {str(e)}")
+        
+        initialize_violations_file()
+        return {"violations": []}
+    except Exception as e:
+        print(f"Error retrieving violations: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving violations: {str(e)}")
 
 @app.post("/upload_video/")
 async def upload_video(file: UploadFile = File(...)):
@@ -39,19 +148,28 @@ async def upload_video(file: UploadFile = File(...)):
             buffer.write(file.file.read())
 
         violations = process_video(video_path)
+        print(f"Detected {len(violations)} violations from video")
 
-        os.remove(video_path)
+        if os.path.exists(video_path):
+            os.remove(video_path)
+            
+        if violations:
+            save_violations(violations)
+            print("Violations saved successfully")
+        else:
+            print("No violations detected in the video")
 
         return {"violations": violations}
 
     except Exception as e:
+        print(f"Error processing video: {str(e)}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 def perform_ocr(image_array):
     if image_array is None or image_array.size == 0:
         raise ValueError("Invalid image for OCR")
 
-    
     image_array = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
 
     results = ocr.ocr(image_array, rec=True)
@@ -108,6 +226,10 @@ def process_video(video_path):
                 crop_base64 = base64.b64encode(buffer).decode('utf-8')
 
                 current_time = datetime.now().strftime('%H-%M-%S-%f')[:12]
+                
+                if not os.path.exists(current_date):
+                    os.makedirs(current_date)
+                    
                 crop_image_path = os.path.join(current_date, f"{text}_{current_time}.jpg")
                 cv2.imwrite(crop_image_path, crop)
 
@@ -123,13 +245,54 @@ def process_video(video_path):
     cap.release()
     return violations
 
-# @app.get("/detection")
-# async def get_violation():
-#     sample_response = {
-#         "plate": "1234ABC",
-#         "isHelmet": "No"
-#     }
-#     return {"message": sample_response}
 
+@app.get("/violations/debug/")
+async def debug_violations_file():
+    """Debug endpoint to check the status of the violations file"""
+    try:
+        file_exists = os.path.exists(VIOLATIONS_FILE)
+        file_size = os.path.getsize(VIOLATIONS_FILE) if file_exists else 0
+        
+        file_content = None
+        violation_count = 0
+        
+        if file_exists and file_size > 0:
+            with open(VIOLATIONS_FILE, "r") as f:
+                try:
+                    data = json.load(f)
+                    violation_count = len(data.get("violations", []))
+                    # Only return a small sample to avoid huge responses
+                    if "violations" in data and data["violations"]:
+                        file_content = {"sample": data["violations"][:2]}
+                except json.JSONDecodeError:
+                    file_content = "Invalid JSON"
+        
+        return {
+            "file_exists": file_exists,
+            "file_size_bytes": file_size,
+            "file_path": os.path.abspath(VIOLATIONS_FILE),
+            "violation_count": violation_count,
+            "file_content_sample": file_content
+        }
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
+# Force reinitialization endpoint
+@app.post("/violations/reset/")
+async def reset_violations_file():
+    """Reset the violations file to an empty state"""
+    try:
+        initialize_violations_file()
+        return {"message": "Violations file has been reset"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error resetting violations file: {str(e)}")
 
+# @app.delete("/violations/")
+# async def clear_violations():
+#     """Clear all recorded violations"""
+#     try:
+#         with open(VIOLATIONS_FILE, "w") as f:
+#             json.dump({"violations": []}, f)
+#         return {"message": "All violations cleared successfully"}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error clearing violations: {str(e)}")
