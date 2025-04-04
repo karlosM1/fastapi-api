@@ -20,7 +20,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"], # Allow all origins or specify a list of allowed origins ggs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,26 +64,20 @@ def save_violations(violations_list: List[Dict[str, Any]]):
         return
     
     try:
-        # Create a data structure if file doesn't exist or is empty
         if not os.path.exists(VIOLATIONS_FILE) or os.path.getsize(VIOLATIONS_FILE) == 0:
             data = {"violations": []}
         else:
-            # Read existing violations
             try:
                 with open(VIOLATIONS_FILE, "r") as f:
                     data = json.load(f)
-                # Ensure the structure is correct
                 if "violations" not in data:
                     data = {"violations": []}
             except json.JSONDecodeError:
-                # If the file is corrupted, reset it
                 print("JSON file was corrupted, resetting it")
                 data = {"violations": []}
         
-        # Append new violations
         data["violations"].extend(violations_list)
         
-        # Write back to file with pretty formatting
         with open(VIOLATIONS_FILE, "w") as f:
             json.dump(data, f, indent=2)
             
@@ -279,7 +273,7 @@ async def debug_violations_file():
     except Exception as e:
         return {"error": str(e), "traceback": traceback.format_exc()}
 
-# Force reinitialization endpoint
+
 @app.post("/violations/reset/")
 async def reset_violations_file():
     """Reset the violations file to an empty state"""

@@ -4,12 +4,9 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
-import traceback  # Add this for detailed error tracing
+import traceback 
 
-# Create a router for mobile API endpoints
 mobile_router = APIRouter(prefix="/mobile", tags=["mobile"])
-
-# Define models for the response
 class ViolationResponse(BaseModel):
     number_plate: str
     timestamp: str
@@ -21,14 +18,12 @@ class ViolationsListResponse(BaseModel):
     total_count: int
 
 def get_violations_from_storage(
-    limit: int = 50,
+    limit: int = 100,
     offset: int = 0
 ):
-    """Retrieve violations from storage based on filters"""
     try:
         all_violations = []
         
-        # Path to the violations.json file
         violations_file = os.path.join("violations_data", "violations.json")
         
         print(f"Looking for violations in: {violations_file}")
@@ -51,11 +46,10 @@ def get_violations_from_storage(
                 return {"violations": [], "total_count": 0}
             except Exception as e:
                 print(f"Error reading violations: {str(e)}")
-                traceback.print_exc()  # Print detailed error information
+                traceback.print_exc()
                 return {"violations": [], "total_count": 0}
         else:
             print(f"File {violations_file} does not exist")
-            # List all files in the directory to help diagnose
             try:
                 if os.path.exists("violations_data"):
                     print(f"Contents of violations_data directory: {os.listdir('violations_data')}")
@@ -67,7 +61,6 @@ def get_violations_from_storage(
             
             return {"violations": [], "total_count": 0}
         
-        # Ensure all_violations is a list
         if not isinstance(all_violations, list):
             print(f"all_violations is not a list, it's a {type(all_violations)}")
             if isinstance(all_violations, dict) and "violations" in all_violations:
@@ -75,14 +68,11 @@ def get_violations_from_storage(
             else:
                 return {"violations": [], "total_count": 0}
         
-        # Sort by timestamp (newest first)
         try:
             all_violations.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         except Exception as e:
             print(f"Error sorting violations: {str(e)}")
-            # Continue without sorting if there's an error
         
-        # Apply pagination
         try:
             paginated_violations = all_violations[offset:offset+limit]
         except Exception as e:
@@ -103,12 +93,8 @@ async def get_violations(
     limit: int = 50,
     offset: int = 0
 ):
-    """
-    Get a list of traffic violations for the mobile app.
-    Supports pagination.
-    """
+
     try:
-        # Get violations from storage
         result = get_violations_from_storage(
             limit=limit,
             offset=offset
@@ -122,12 +108,4 @@ async def get_violations(
 
 @mobile_router.get("/test")
 async def test_endpoint():
-    """
-    A simple test endpoint to verify the API is working
-    """
     return {"status": "ok", "message": "API is working"}
-
-# Add this router to your main app
-# In your main.py file, add:
-# from mobile_api import mobile_router
-# app.include_router(mobile_router)
