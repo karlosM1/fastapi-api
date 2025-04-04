@@ -1,5 +1,5 @@
 import traceback
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import Body, FastAPI, File, UploadFile, HTTPException
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Optional
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from mobile_api import mobile_router
 app = FastAPI()
 
 
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(mobile_router)
 ocr = PaddleOCR()
 model = YOLO("best.pt")
 names = model.names
@@ -296,3 +298,56 @@ async def reset_violations_file():
 #         return {"message": "All violations cleared successfully"}
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=f"Error clearing violations: {str(e)}")
+
+
+
+
+
+
+
+@app.post("/send_notification/")
+async def send_notification(payload: Dict[Any, Any] = Body(...)):
+    """
+    Send a notification to the mobile app.
+    Payload should include:
+    - title: notification title
+    - body: notification message
+    - data: additional data (optional)
+    - token: device token (optional)
+    """
+    try:
+        print(f"Sending notification: {payload}")
+        
+        # Extract notification details
+        title = payload.get("title")
+        body = payload.get("body")
+        data = payload.get("data", {})
+        token = payload.get("token")
+        
+        if not title or not body:
+            raise HTTPException(status_code=400, detail="Title and body are required")
+        
+        # This is a placeholder endpoint that logs the notification
+        # In a real implementation, you would integrate with a push notification service
+        # such as Firebase Cloud Messaging, OneSignal, etc.
+        
+        notification_log = {
+            "timestamp": datetime.now().isoformat(),
+            "payload": payload
+        }
+        
+        # You might want to store notifications in a separate file or database
+        print(f"Notification received: {notification_log}")
+        
+        # Mock a successful response
+        notification_id = f"notification_{datetime.now().timestamp()}"
+        
+        return {
+            "status": "success",
+            "message": "Notification request received successfully",
+            "notification_id": notification_id
+        }
+    except Exception as e:
+        print(f"Error processing notification: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error processing notification: {str(e)}")
