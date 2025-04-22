@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from mobile_api import mobile_router
+from dashboard_api import dashboard_router
 app = FastAPI()
 
 
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(mobile_router)
+app.include_router(dashboard_router)
 ocr = PaddleOCR()
 model = YOLO("best.pt")
 names = model.names
@@ -299,49 +301,49 @@ async def reset_violations_file():
 
 
 
-@app.post("/send_notification/")
-async def send_notification(payload: Dict[Any, Any] = Body(...)):
-    """
-    Send a notification to the mobile app.
-    Payload should include:
-    - title: notification title
-    - body: notification message
-    - data: additional data (optional)
-    - token: device token (optional)
-    """
-    try:
-        print(f"Sending notification: {payload}")
+# @app.post("/send_notification/")
+# async def send_notification(payload: Dict[Any, Any] = Body(...)):
+#     """
+#     Send a notification to the mobile app.
+#     Payload should include:
+#     - title: notification title
+#     - body: notification message
+#     - data: additional data (optional)
+#     - token: device token (optional)
+#     """
+#     try:
+#         print(f"Sending notification: {payload}")
         
-        # Extract notification details
-        title = payload.get("title")
-        body = payload.get("body")
-        data = payload.get("data", {})
-        token = payload.get("token")
+#         # Extract notification details
+#         title = payload.get("title")
+#         body = payload.get("body")
+#         data = payload.get("data", {})
+#         token = payload.get("token")
         
-        if not title or not body:
-            raise HTTPException(status_code=400, detail="Title and body are required")
+#         if not title or not body:
+#             raise HTTPException(status_code=400, detail="Title and body are required")
         
-        # This is a placeholder endpoint that logs the notification
-        # In a real implementation, you would integrate with a push notification service
-        # such as Firebase Cloud Messaging, OneSignal, etc.
+#         # This is a placeholder endpoint that logs the notification
+#         # In a real implementation, you would integrate with a push notification service
+#         # such as Firebase Cloud Messaging, OneSignal, etc.
         
-        notification_log = {
-            "timestamp": datetime.now().isoformat(),
-            "payload": payload
-        }
+#         notification_log = {
+#             "timestamp": datetime.now().isoformat(),
+#             "payload": payload
+#         }
         
-        # You might want to store notifications in a separate file or database
-        print(f"Notification received: {notification_log}")
+#         # You might want to store notifications in a separate file or database
+#         print(f"Notification received: {notification_log}")
         
-        # Mock a successful response
-        notification_id = f"notification_{datetime.now().timestamp()}"
+#         # Mock a successful response
+#         notification_id = f"notification_{datetime.now().timestamp()}"
         
-        return {
-            "status": "success",
-            "message": "Notification request received successfully",
-            "notification_id": notification_id
-        }
-    except Exception as e:
-        print(f"Error processing notification: {str(e)}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error processing notification: {str(e)}")
+#         return {
+#             "status": "success",
+#             "message": "Notification request received successfully",
+#             "notification_id": notification_id
+#         }
+#     except Exception as e:
+#         print(f"Error processing notification: {str(e)}")
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail=f"Error processing notification: {str(e)}")
