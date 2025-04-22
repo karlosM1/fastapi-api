@@ -24,7 +24,7 @@ async def get_dashboard_violations(
             "violation_sent": "10",
             "live_cameras": "5",
             "new_users": "3",
-            "total_users": "50"
+            "total_users": "20"
         }
         return response
     except Exception as e:
