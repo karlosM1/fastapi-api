@@ -1,4 +1,3 @@
-# app.py
 import traceback
 import os
 import asyncpg
@@ -12,21 +11,22 @@ from datetime import datetime
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from ultralytics import YOLO
-import cvzone
 from paddleocr import PaddleOCR
 
 from mobile_api import mobile_router
 from dashboard_api import dashboard_router
-# from db import database, save_violation_db
-# from contextlib import asynccontextmanager
-
+from db import database, save_violation_db
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-app = FastAPI()
+load_dotenv()
 
-# CORS setup
+app = FastAPI()
+DATABASE_URL = os.getenv("DATABASE_URL")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,11 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+app.mount("/images", StaticFiles(directory="."), name="images")
+
 app.include_router(mobile_router)
 app.include_router(dashboard_router)
 
-# Load ML Models
 ocr = PaddleOCR()
 model = YOLO("best.pt")
 names = model.names
@@ -47,69 +47,52 @@ names = model.names
 area = [(1, 173), (62, 468), (608, 431), (364, 155)]
 current_date = datetime.now().strftime('%Y-%m-%d')
 
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 @app.on_event("startup")
 async def startup():
     app.state.db_pool = await asyncpg.create_pool(
         dsn=DATABASE_URL
     )
 
-# Close the connection pool on shutdown
 @app.on_event("shutdown")
 async def shutdown():
     await app.state.db_pool.close()
 
-
-
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-#     app.state.db_pool = await asyncpg.create_pool(
-#         dsn=DATABASE_URL
-#     )
-#     yield
-#     await app.state.db_pool.close()
-
-
-# app = FastAPI(lifespan=lifespan)
-
-async def insert_violation(pool, violation: dict):
+async def insert_violation(pool, violation):
     try:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO violations (plate_number, violation_type, detected_at, image_url)
-                VALUES ($1, $2, $3, $4)
-                """,
-                violation["plate_number"],      # <-- match keys
-                violation["violation_type"],
-                violation["detected_at"],  
-                violation["cropped_image"],       # <-- match key here
-                False
-            )
-    except Exception as e:
-        print(f"Error inserting violation: {e}")
+        if isinstance(violation['detected_at'], str):
+            violation['detected_at'] = datetime.fromisoformat(violation['detected_at'])
+
+        await pool.execute('''
+            INSERT INTO violations (plate_number, violation_type, detected_at, image_url, is_notified)
+            VALUES ($1, $2, $3, $4, $5)
+        ''',
+            violation['plate_number'],
+            violation['violation_type'],
+            violation['detected_at'],
+            violation['image_url'],
+            False
+        )
+    except KeyError as ke:
+        print(f"KeyError when inserting violation: {ke}")
+        print(f"Violation data that caused the error: {violation}")
         raise
-    
 
 @app.post("/upload_video/")
 async def upload_video(file: UploadFile = File(...)):
     try:
-        video_path = "final.mp4"  
+        video_path = "final.mp4"
         with open(video_path, "wb") as buffer:
             buffer.write(file.file.read())
 
-        # Process the video and detect violations
         violations = process_video(video_path)
         print(f"Detected {len(violations)} violations from video")
 
         if os.path.exists(video_path):
             os.remove(video_path)
-            
+
         if violations:
-            # Insert each violation into NeonDB
             for violation in violations:
+                print("Violation data before insert:", violation)
                 await insert_violation(app.state.db_pool, violation)
             print("Violations saved to NeonDB successfully")
         else:
@@ -120,7 +103,10 @@ async def upload_video(file: UploadFile = File(...)):
     except Exception as e:
         print(f"Error processing video: {str(e)}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"message": f"Internal Server Error: {str(e)}"}
+        )
 
 def perform_ocr(image_array):
     if image_array is None or image_array.size == 0:
@@ -154,9 +140,8 @@ def process_video(video_path):
             boxes = results[0].boxes.xyxy.int().cpu().tolist()
             class_ids = results[0].boxes.cls.int().cpu().tolist()
             track_ids = results[0].boxes.id.int().cpu().tolist()
-            confidences = results[0].boxes.conf.cpu().tolist() 
 
-            for box, class_id, track_id, conf in zip(boxes, class_ids, track_ids, confidences):
+            for box, class_id, track_id in zip(boxes, class_ids, track_ids):
                 c = names[class_id]
                 x1, y1, x2, y2 = box
                 cx = (x1 + x2) // 2
@@ -177,28 +162,23 @@ def process_video(video_path):
                 text = perform_ocr(crop)
                 print(f"Detected Number Plate: {text}")
 
-                # Convert to base64
-                _, buffer = cv2.imencode('.jpg', crop)
-                crop_base64 = base64.b64encode(buffer).decode('utf-8')
-
                 current_time = datetime.now().strftime('%H-%M-%S-%f')[:12]
-                
-                # Save cropped image locally (optional)
+
                 if not os.path.exists(current_date):
                     os.makedirs(current_date)
-                    
-                crop_image_path = os.path.join(current_date, f"{text}_{current_time}.jpg")
+
+                crop_image_filename = f"{text}_{current_time}.jpg"
+                crop_image_path = os.path.join(current_date, crop_image_filename)
                 cv2.imwrite(crop_image_path, crop)
 
-                # Append violation to list
                 violations.append({
-                    "plate_number": text,                    # <-- MATCHED to DB
-                    "violation_type": "No Helmet",            # <-- MATCHED to DB
-                    "detected_at": datetime.now(),            # <-- MATCHED to DB
-                    "cropped_image": crop_base64 
+                    "plate_number": text,
+                    "detected_at": datetime.now(),
+                    "violation_type": "No Helmet",
+                    "image_url": f"{current_date}/{crop_image_filename}",
+                    "is_notified": False
                 })
                 processed_track_ids.add(numberplate_track_id)
 
     cap.release()
     return violations
-
