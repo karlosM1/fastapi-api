@@ -8,12 +8,30 @@ import traceback
 
 mobile_router = APIRouter(prefix="/mobile")
 
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY")
 
-@mobile_router.get("/userviolation/{clerk_id}")
-async def get_violations(clerk_id: str, request: Request):
+
+@mobile_router.get("/userviolation/{session_id}")
+async def get_violations(session_id: str, request: Request):
+    try:
+        response = request.get(
+            f"https://api.clerk.dev/v1/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"}
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Invalid session ID")
+
+        clerk_user_id = response.json().get("user_id")
+        if not clerk_user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in session")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching Clerk user: {str(e)}")
+
     async with request.app.state.db_pool.acquire() as conn:
         user = await conn.fetchrow(
-            "SELECT plate_number FROM users WHERE clerk_id = $1", clerk_id
+            "SELECT plate_number FROM users WHERE clerk_id = $1", clerk_user_id
         )
 
         if not user:
@@ -26,10 +44,10 @@ async def get_violations(clerk_id: str, request: Request):
             plate_number
         )
 
-        return {
-            "plate_number": plate_number,
-            "violations": [dict(v) for v in violations]
-        }
+    return {
+        "plate_number": plate_number,
+        "violations": [dict(v) for v in violations]
+    }
 # class ViolationResponse(BaseModel):
 #     number_plate: str
 #     timestamp: str
