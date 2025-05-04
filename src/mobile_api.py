@@ -5,49 +5,49 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 import traceback 
+import httpx
 
 mobile_router = APIRouter(prefix="/mobile")
 
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY")
 
-
-@mobile_router.get("/userviolation/{session_id}")
-async def get_violations(session_id: str, request: Request):
+@mobile_router.get("/userviolation/{email}")
+async def get_violations(email: str, request: Request):
     try:
-        response = request.get(
-            f"https://api.clerk.dev/v1/sessions/{session_id}",
-            headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"}
-        )
+        async with request.app.state.db_pool.acquire() as conn:
+            user = await conn.fetchrow(
+                "SELECT plate_number FROM users WHERE email = $1", email
+            )
 
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Invalid session ID")
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
 
-        clerk_user_id = response.json().get("user_id")
-        if not clerk_user_id:
-            raise HTTPException(status_code=400, detail="User ID not found in session")
+            plate_number = user["plate_number"]
+
+            violations = await conn.fetch(
+                "SELECT * FROM violations WHERE plate_number = $1 ORDER BY detected_at DESC",
+                plate_number
+            )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching Clerk user: {str(e)}")
-
-    async with request.app.state.db_pool.acquire() as conn:
-        user = await conn.fetchrow(
-            "SELECT plate_number FROM users WHERE clerk_id = $1", clerk_user_id
-        )
-
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        plate_number = user["plate_number"]
-
-        violations = await conn.fetch(
-            "SELECT * FROM violations WHERE plate_number = $1 ORDER BY detected_at DESC",
-            plate_number
-        )
+        raise HTTPException(status_code=500, detail=f"Error fetching user data: {str(e)}")
 
     return {
-        "plate_number": plate_number,
+        "email": email,
         "violations": [dict(v) for v in violations]
     }
+
+
+
+# {
+#     "detail": "Error fetching Clerk user: Mapping.get() got an unexpected keyword argument 'headers'"
+# }
+
+
+
+
+
+
 # class ViolationResponse(BaseModel):
 #     number_plate: str
 #     timestamp: str
