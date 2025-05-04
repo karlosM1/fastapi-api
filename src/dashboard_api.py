@@ -53,6 +53,22 @@ async def get_violations_per_month(request: Request):
         raise HTTPException(status_code=500, detail="Failed to fetch violations per month")
     
     
+# TODO: ADD create_at column to users table and uncomment this function
+# @dashboard_router.get("/new-users-count")
+# async def get_new_users_count(request: Request):
+#     try:
+#         async with request.app.state.db_pool.acquire() as conn:
+#             row = await conn.fetchrow("""
+#                 SELECT COUNT(*) AS new_users
+#                 FROM users
+#                 WHERE detected_at >= NOW() - INTERVAL '1 day';
+#             """)
+#             return {"new_users": row["new_users"]}
+#     except Exception:
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail="Failed to fetch new user count")
+
+
 
 
 class DashboardViolationResponse(BaseModel):
