@@ -21,11 +21,13 @@ from dashboard_api import dashboard_router
 from db import database, save_violation_db
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+# from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
 app = FastAPI()
 DATABASE_URL = os.getenv("DATABASE_URL")
+# app.mount("/2025-05-02", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
