@@ -21,13 +21,14 @@ from dashboard_api import dashboard_router
 from db import database, save_violation_db
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-# from fastapi.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles
+
 
 load_dotenv()
 
 app = FastAPI()
 DATABASE_URL = os.getenv("DATABASE_URL")
-# app.mount("/2025-05-02", StaticFiles(directory="static"), name="static")
+app.mount("/images", StaticFiles(directory="."), name="images")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +79,28 @@ async def insert_violation(pool, violation):
         print(f"KeyError when inserting violation: {ke}")
         print(f"Violation data that caused the error: {violation}")
         raise
+
+from fastapi import Query
+
+@app.get("/violations/")
+async def get_violations(limit: Optional[int] = Query(None), offset: Optional[int] = Query(0)):
+    try:
+        query = "SELECT * FROM violations ORDER BY detected_at DESC"
+        if limit is not None:
+            query += f" LIMIT {limit} OFFSET {offset}"
+        elif offset > 0:
+            query += f" OFFSET {offset}"
+
+        records = await app.state.db_pool.fetch(query)
+        violations = [dict(record) for record in records]
+
+        print(f"Fetched {len(violations)} violations from database")
+        return {"violations": violations}
+    except Exception as e:
+        print(f"Error retrieving violations: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving violations: {str(e)}")
+
 
 @app.post("/upload_video/")
 async def upload_video(file: UploadFile = File(...)):
@@ -181,6 +204,7 @@ def process_video(video_path):
                     "is_notified": False
                 })
                 processed_track_ids.add(numberplate_track_id)
+
 
     cap.release()
     return violations
