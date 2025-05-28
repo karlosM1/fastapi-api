@@ -7,9 +7,9 @@ import base64
 from io import BytesIO
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-
+from fastapi import Query
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -28,7 +28,7 @@ load_dotenv()
 
 app = FastAPI()
 DATABASE_URL = os.getenv("DATABASE_URL")
-app.mount("/images", StaticFiles(directory="."), name="images")
+app.mount("/images", StaticFiles(directory="./"), name="images") #change the directory to src if there's an error regarding the path
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,8 +37,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.mount("/images", StaticFiles(directory="."), name="images")
 
 app.include_router(mobile_router)
 app.include_router(dashboard_router)
@@ -80,7 +78,7 @@ async def insert_violation(pool, violation):
         print(f"Violation data that caused the error: {violation}")
         raise
 
-from fastapi import Query
+
 
 @app.get("/violations/")
 async def get_violations(limit: Optional[int] = Query(None), offset: Optional[int] = Query(0)):
@@ -109,7 +107,7 @@ async def upload_video(file: UploadFile = File(...)):
         with open(video_path, "wb") as buffer:
             buffer.write(file.file.read())
 
-        violations = process_video(video_path)
+        violations, processed_video_path = process_video(video_path)
         print(f"Detected {len(violations)} violations from video")
 
         if os.path.exists(video_path):
@@ -123,7 +121,10 @@ async def upload_video(file: UploadFile = File(...)):
         else:
             print("No violations detected in the video")
 
-        return {"violations": violations}
+        return {
+            "violations": violations,
+            "video_url": f"/video/{os.path.basename(processed_video_path)}"
+        }
 
     except Exception as e:
         print(f"Error processing video: {str(e)}")
@@ -132,7 +133,6 @@ async def upload_video(file: UploadFile = File(...)):
             status_code=500,
             content={"message": f"Internal Server Error: {str(e)}"}
         )
-
 def perform_ocr(image_array):
     if image_array is None or image_array.size == 0:
         raise ValueError("Invalid image for OCR")
@@ -148,6 +148,15 @@ def process_video(video_path):
     processed_track_ids = set()
     cap = cv2.VideoCapture(video_path)
     violations = []
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    os.makedirs("processed_videos", exist_ok=True)
+    output_path = "processed_videos/annotated_output.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
     while True:
         ret, frame = cap.read()
@@ -174,6 +183,10 @@ def process_video(video_path):
 
                 result = cv2.pointPolygonTest(np.array(area, np.int32), (cx, cy), False)
                 if result >= 0:
+                    label_color = (0, 0, 255) if c == 'no-helmet' else (0, 255, 0)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), label_color, 2)
+                    cv2.putText(frame, c, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, label_color, 2)
+
                     if c == 'no-helmet':
                         no_helmet_detected = True
                     elif c == 'numberplate':
@@ -205,6 +218,60 @@ def process_video(video_path):
                 })
                 processed_track_ids.add(numberplate_track_id)
 
+        out.write(frame)
 
     cap.release()
-    return violations
+    out.release()
+    return violations, output_path
+
+@app.get("/video/{filename}")
+async def get_video(filename: str):
+    video_path = os.path.join("processed_videos", filename)
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    return FileResponse(video_path, media_type="video/mp4")
+
+
+@app.get("/get_violation_image/{date}/{filename:path}")
+async def get_violation_image(date: str, filename: str):
+    """
+    Serve violation image files directly with extensive logging.
+    """
+    cwd = os.getcwd()
+    print(f"Current working directory: {cwd}")
+    
+    image_path = os.path.join(date, filename)
+    absolute_path = os.path.abspath(image_path)
+    
+    print(f"Requested date: {date}")
+    print(f"Requested filename: {filename}")
+    print(f"Constructed path: {image_path}")
+    print(f"Absolute path: {absolute_path}")
+    
+    if not os.path.exists(image_path):
+        print(f"Image NOT FOUND at: {image_path}")
+        try:
+            if os.path.exists(date):
+                files = os.listdir(date)
+                print(f"Files in {date} directory: {files}")
+            else:
+                print(f"Directory {date} does not exist")
+                top_dirs = os.listdir(".")
+                print(f"Top-level directories: {top_dirs}")
+        except Exception as e:
+            print(f"Error listing directory: {str(e)}")
+        
+        raise HTTPException(status_code=404, detail=f"Image not found at {image_path}")
+    else:
+        print(f"✅ Image FOUND at: {image_path}")
+    
+    try:
+        return FileResponse(
+            path=image_path,
+            media_type="image/jpeg",
+            filename=os.path.basename(filename)
+        )
+    except Exception as e:
+        print(f"Error serving image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
