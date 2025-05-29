@@ -51,6 +51,21 @@ async def get_violations_per_month(request: Request):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to fetch violations per month")
+
+
+@dashboard_router.get("/user-name")
+async def get_user_name(plate_number: str, request: Request):
+    try:
+        async with request.app.state.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT name FROM users WHERE plate_number = $1;", plate_number
+            )
+            if not row:
+                raise HTTPException(status_code=404, detail="User not found")
+            return {"name": row["name"]}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to fetch user name")
     
     
 # TODO: ADD create_at column to users table and uncomment this function
